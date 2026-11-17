@@ -489,13 +489,13 @@ function viewVisites(origen){
     else if(b.dataset.edit){editId=b.dataset.edit;route();$('#vform').scrollIntoView({behavior:'smooth',block:'start'});}
     else if(b.dataset.del){const v=S.visits.find(x=>x.id===b.dataset.del);confirmBox(`Vols esborrar la visita de <b>${esc(v.pacient)}</b> del ${dmy(v.data)}?`,'Esborra',()=>{S.visits=S.visits.filter(x=>x.id!==v.id);save();route();toast('Visita esborrada')},true);}
     else if(b.id==='sample'){loadSample();}
-    else if(b.dataset.fitxa){fitxaPac=b.dataset.fitxa;location.hash='#pacients';}
+    else if(b.dataset.fitxa){fitxaPac=b.dataset.fitxa;fitxaMes='';location.hash='#pacients';}
   };
 }
 function bindMonth(){ $('#mes')?.addEventListener('change',e=>{ if(e.target.value){curMonth=e.target.value;editId=null;route();} }); }
 
 /* ===== Cobraments pendents ===== */
-let fitxaPac='';
+let fitxaPac='', fitxaMes=null; // null = mes actual per defecte; '' = tots els mesos
 const origenTxt=v=>v.origen==='centre'?CN():'Privat';
 function viewPendents(){
   const pend=S.visits.filter(v=>cobrable(v)&&!v.pagat&&v.preu>0);
@@ -531,7 +531,7 @@ function viewPendents(){
     if(b.dataset.pay1){const v=S.visits.find(x=>x.id===b.dataset.pay1);v.pagat=true;v.metode=met(v.id);save();toast(`Visita del ${dmy(v.data)} marcada com a pagada`);viewPendents();backupBanner();}
     else if(b.dataset.payall){const k=b.dataset.payall,m=met('all-'+encodeURIComponent(k));const vs=g[k];
       confirmBox(`Marcar com a pagades les <b>${vs.length}</b> visites pendents de <b>${esc(k)}</b> (${eur(vs.reduce((s,v)=>s+v.preu,0))}) amb ${METODES[m]}?`,'Marca-les pagades',()=>{vs.forEach(v=>{v.pagat=true;v.metode=m});save();toast('Visites marcades com a pagades');viewPendents();});}
-    else if(b.dataset.fitxa){fitxaPac=b.dataset.fitxa;location.hash='#pacients';}
+    else if(b.dataset.fitxa){fitxaPac=b.dataset.fitxa;fitxaMes='';location.hash='#pacients';}
   };
 }
 
@@ -539,7 +539,12 @@ function viewPendents(){
 function viewPacient(){
   const pacs=pacients();
   if(!pacs.includes(fitxaPac)) fitxaPac=pacs[0]||'';
-  const all=S.visits.filter(v=>v.pacient===fitxaPac).sort((a,b)=>b.data.localeCompare(a.data));
+  const allP=S.visits.filter(v=>v.pacient===fitxaPac).sort((a,b)=>b.data.localeCompare(a.data));
+  if(fitxaMes===null) fitxaMes=ym(today());
+  const mesos=[...new Set([ym(today()),fitxaMes,...allP.map(v=>ym(v.data))].filter(Boolean))].sort().reverse();
+  const all=fitxaMes?allP.filter(v=>ym(v.data)===fitxaMes):allP;
+  const deuteTotal=r2(allP.filter(v=>cobrable(v)&&!v.pagat).reduce((s,v)=>s+v.preu,0));
+  const quan=fitxaMes?mesNom(fitxaMes):'tots els mesos';
   const cob=all.filter(cobrable);
   const sum=(arr,k='preu')=>r2(arr.reduce((s,v)=>s+(+v[k]||0),0));
   const pagat=cob.filter(v=>v.pagat), pend=cob.filter(v=>!v.pagat);
@@ -548,17 +553,20 @@ function viewPacient(){
   const perEstat={};all.forEach(v=>{perEstat[v.estat]=(perEstat[v.estat]||0)+1});
   const perMet={};pagat.forEach(v=>{const k=v.metode||'';perMet[k]=(perMet[k]||0)+v.preu});
   const primera=all.find(v=>v.primera);
-  const invs=S.invoices.filter(i=>i.serie==='P'&&i.client.nom===fitxaPac).sort((a,b)=>b.data.localeCompare(a.data));
+  const invs=S.invoices.filter(i=>i.serie==='P'&&i.client.nom===fitxaPac&&(!fitxaMes||ym(i.data)===fitxaMes)).sort((a,b)=>b.data.localeCompare(a.data));
   $('#main').innerHTML=`
   <div class="head"><div><h1>Fitxa de pacient</h1><p>Visites, tipus i pagaments d'un pacient.</p></div>
-    ${pacs.length?`<label style="min-width:240px">Pacient<select id="fx-pac">${pacs.map(p=>`<option ${p===fitxaPac?'selected':''}>${esc(p)}</option>`).join('')}</select></label>`:''}</div>
+    ${pacs.length?`<div class="row" style="align-items:end"><label style="min-width:220px">Pacient<select id="fx-pac">${pacs.map(p=>`<option ${p===fitxaPac?'selected':''}>${esc(p)}</option>`).join('')}</select></label>
+    <label style="min-width:170px">Mes<select id="fx-mes"><option value="" ${!fitxaMes?'selected':''}>Tots els mesos</option>${mesos.map(m=>`<option value="${m}" ${m===fitxaMes?'selected':''}>${cap(mesNom(m))}${allP.some(v=>ym(v.data)===m)?'':' (cap visita)'}</option>`).join('')}</select></label></div>`:''}</div>
   ${!pacs.length?'<div class="panel empty">Encara no hi ha cap pacient. Quan entris visites, apareixeran aquí.</div>':`
+  ${fitxaMes&&deuteTotal>r2(pend.reduce((s,v)=>s+v.preu,0))?`<p class="note"><b>Deute total de tots els mesos: ${eur(deuteTotal)}.</b> Aquí només es veu el de ${mesNom(fitxaMes)}. <button class="btn sm" id="fx-all">Mostra tots els mesos</button></p>`:''}
+  ${!all.length?`<div class="panel empty">${esc(fitxaPac)} no té cap visita a ${quan}.</div>`:''}
   <div class="kpis">
-    <div class="kpi"><div class="l">Visites</div><div class="v">${all.length}</div><div class="s">${cob.length} cobrables${all.length-cob.length?` · ${all.length-cob.length} sense cost`:''}</div></div>
+    <div class="kpi"><div class="l">Visites · ${quan}</div><div class="v">${all.length}</div><div class="s">${cob.length} cobrables${all.length-cob.length?` · ${all.length-cob.length} sense cost`:''}</div></div>
     <div class="kpi"><div class="l">Total</div><div class="v">${eur(sum(cob))}</div></div>
     <div class="kpi"><div class="l">Pagat</div><div class="v" style="color:var(--ok)">${eur(sum(pagat))}</div></div>
-    <div class="kpi ${pend.length?'':'main'}"><div class="l">Pendent</div><div class="v" style="color:${pend.length?'var(--bad)':'inherit'}">${eur(sum(pend))}</div><div class="s">${pend.length?pend.length+' visit'+(pend.length>1?'es':'a'):'Al dia'}</div></div>
-    <div class="kpi"><div class="l">Primera i última</div><div class="v" style="font-size:16px">${all.length?dmy(all[all.length-1].data)+' – '+dmy(all[0].data):'—'}</div><div class="s">${primera?'1a visita: '+dmy(primera.data):''}</div></div>
+    <div class="kpi ${pend.length?'':'main'}"><div class="l">Pendent${fitxaMes?' del mes':''}</div><div class="v" style="color:${pend.length?'var(--bad)':'inherit'}">${eur(sum(pend))}</div><div class="s">${pend.length?pend.length+' visit'+(pend.length>1?'es':'a'):'Al dia'}${fitxaMes?` · total: ${eur(deuteTotal)}`:''}</div></div>
+    <div class="kpi"><div class="l">Primera i última${fitxaMes?' del mes':''}</div><div class="v" style="font-size:16px">${all.length?dmy(all[all.length-1].data)+' – '+dmy(all[0].data):'—'}</div><div class="s">${primera?'1a visita: '+dmy(primera.data):''}</div></div>
   </div>
   <div class="two">
     <section class="panel"><h2>Per tipus de visita</h2>
@@ -572,7 +580,7 @@ function viewPacient(){
       ${invs.length?`<p style="margin:10px 0 0;font-size:13px">Factures: ${invs.map(i=>`<button class="btn sm" data-view="${i.id}">${esc(i.num)} · ${eur(i.total)}</button>`).join(' ')}</p>`:''}
     </section>
   </div>
-  <section><h2>Totes les visites</h2>
+  <section><h2>Visites · ${quan}</h2>
     <div class="tbl"><table><thead><tr><th>Data</th><th>Origen</th><th>Tipus</th><th>Estat</th><th class="n">Preu</th><th>Pagament</th><th>Factura</th><th></th></tr></thead><tbody>
     ${all.map(v=>`<tr><td>${dmy(v.data)}</td><td>${esc(origenTxt(v))}</td><td>${v.origen==='centre'?esc(tipusTxt(v)):'—'}</td>
       <td>${v.estat==='feta'?'<span class="muted">Realitzada</span>':`<span class="pill ${cobrable(v)?'p-warn':'p-mut'}">${ESTATS[v.estat]}</span>`}</td>
@@ -583,6 +591,8 @@ function viewPacient(){
     </tbody></table></div>
   </section>`}`;
   $('#fx-pac')?.addEventListener('change',e=>{fitxaPac=e.target.value;viewPacient();});
+  $('#fx-mes')?.addEventListener('change',e=>{fitxaMes=e.target.value;viewPacient();});
+  $('#fx-all')?.addEventListener('click',()=>{fitxaMes='';viewPacient();});
   $('#main').onclick=e=>{
     const b=e.target.closest('button'); if(!b) return;
     if(b.dataset.pay){const v=S.visits.find(x=>x.id===b.dataset.pay);v.pagat=!v.pagat;save();viewPacient();}
