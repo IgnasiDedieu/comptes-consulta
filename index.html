@@ -215,7 +215,7 @@ function saveLocal(){
   }).catch(()=>{});
   return saveChain;
 }
-function save(){ if(LOCKED) return; S.savedAt=new Date().toISOString(); saveLocal().then(queueFile); }
+function save(){ if(LOCKED) return; S.savedAt=new Date().toISOString(); S.dirty=true; saveLocal().then(queueFile); }
 function promptPassword(title,text){
   return new Promise(res=>{
     const bg=document.createElement('div');bg.className='modal-bg';
@@ -314,10 +314,10 @@ const mesNom=m=>{const [y,mm]=m.split('-');return MESOS[+mm-1]+' '+y};
 const cap=s=>s.charAt(0).toUpperCase()+s.slice(1);
 let curMonth=ym(today());
 function toast(msg){document.querySelectorAll(".toast").forEach(x=>x.remove());const t=document.createElement('div');t.className='toast';t.setAttribute('role','status');t.textContent=msg;document.body.appendChild(t);setTimeout(()=>t.remove(),2600)}
-function confirmBox(msg,okLabel,onYes,danger,cancelLabel='Cancel·la'){
+function confirmBox(msg,okLabel,onYes,danger,cancelLabel='Cancel·la',onNo=null){
   const bg=document.createElement('div');bg.className='modal-bg';
   bg.innerHTML=`<div class="modal" role="dialog" aria-modal="true" style="max-width:440px"><div>${msg}</div><div class="row end"><button class="btn" data-x>${esc(cancelLabel)}</button><button class="btn ${danger?'danger':'pri'}" data-y>${esc(okLabel)}</button></div></div>`;
-  bg.addEventListener('click',e=>{if(e.target===bg||e.target.dataset.x!==undefined)bg.remove();if(e.target.dataset.y!==undefined){bg.remove();onYes();}});
+  bg.addEventListener('click',e=>{if(e.target===bg||e.target.dataset.x!==undefined){bg.remove();if(onNo&&e.target.dataset.x!==undefined)onNo();}if(e.target.dataset.y!==undefined){bg.remove();onYes();}});
   document.body.appendChild(bg); bg.querySelector('[data-y]').focus();
 }
 const cobrable=v=>COBRA[v.estat];
@@ -930,7 +930,8 @@ async function deliverFile(blob,name){
 async function doBackup(){
   await saveChain;
   const blob=new Blob([await serialize()],{type:'application/json'});
-  if(await deliverFile(blob,`comptes-consulta-${today()}.json`)){S.lastBackup=new Date().toISOString();save();toast('Còpia feta');route();}
+  if(await deliverFile(blob,`comptes-consulta-${today()}.json`)){S.lastBackup=new Date().toISOString();S.dirty=false;await saveLocal();queueFile();toast('Còpia feta');if(!LOCKED)route();return true}
+  return false;
 }
 const crcT=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0}return t})();
 const crc32=b=>{let c=0xFFFFFFFF;for(let i=0;i<b.length;i++)c=crcT[(c^b[i])&255]^(c>>>8);return (c^0xFFFFFFFF)>>>0};
@@ -979,7 +980,15 @@ function exportXlsx(visits,fname,sheetName){
 function backupBanner(){
   if(S.visits.length&&!ENC.key&&location.hash!=='#config') $('#main').insertAdjacentHTML('afterbegin',`<p class="note row" style="justify-content:space-between"><span><b>Les dades no tenen contrasenya.</b> Qualsevol persona amb accés a ${IOS?'l\u2019iPad':'aquest ordinador'} pot veure-les.</span><a class="btn sm" href="#config">Posa una contrasenya</a></p>`);
   if(!S.visits.length||(fileH&&filePerm)) return;
-  const d=backupDays(); if(d!==null&&d<=7) return;
+  const d=backupDays();
+  if(d!==null&&d<=7){
+    // Recordatori diari: hi ha canvis des de l'última còpia i avui encara no se n'ha fet cap
+    if(pendingBackup()){
+      $('#main').insertAdjacentHTML('afterbegin',`<p class="note row" style="justify-content:space-between;background:var(--accent-soft)"><span><b style="color:var(--accent)">Hi ha canvis que encara no tenen còpia de seguretat.</b> Desa-la abans d'acabar el dia a ${IOS?'iCloud Drive':'un lloc segur'}.</span><button class="btn pri sm" id="bk-now">${IOS?'Desa una còpia a iCloud':'Fes una còpia ara'}</button></p>`);
+      $('#bk-now').addEventListener('click',doBackup);
+    }
+    return;
+  }
   $('#main').insertAdjacentHTML('afterbegin',`<p class="note row" style="justify-content:space-between"><span><b>${d===null?'Encara no has fet cap còpia de seguretat.':`Fa ${d} dies que no fas cap còpia de seguretat.`}</b> Si es perd ${IOS?'l\u2019iPad':'aquest navegador'}, es perdrien les dades.</span><button class="btn pri sm" id="bk-now">${IOS?'Desa una còpia a iCloud':'Fes una còpia ara'}</button></p>`);
   $('#bk-now').addEventListener('click',doBackup);
 }
@@ -1007,11 +1016,16 @@ function viewLock(){
   $('#lk-wipe').addEventListener('click',()=>confirmBox('Segur que vols esborrar totes les dades protegides d\u2019aquest dispositiu? No es podrà desfer.','Esborra-ho tot',()=>{try{localStorage.removeItem(KEY)}catch(e){} kvSet('file',undefined); location.reload();},true));
 }
 async function lockNow(){ if(!ENC.key||LOCKED) return; await saveChain; location.reload(); }
+const localDay=iso=>{const d=new Date(iso);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')};
+function pendingBackup(){ return !!(S.visits.length&&!(fileH&&filePerm)&&S.dirty!==false&&(!S.lastBackup||localDay(S.lastBackup)!==today())); }
 let lastAct=Date.now(), hiddenAt=0;
 ['pointerdown','keydown','touchstart'].forEach(ev=>document.addEventListener(ev,()=>{lastAct=Date.now()},{passive:true}));
 document.addEventListener('visibilitychange',()=>{ if(document.hidden) hiddenAt=Date.now(); else if(hiddenAt&&Date.now()-hiddenAt>10*60e3) lockNow(); });
 setInterval(()=>{ if(Date.now()-lastAct>15*60e3) lockNow(); },30e3);
-document.getElementById('lockBtn').addEventListener('click',lockNow);
+document.getElementById('lockBtn').addEventListener('click',()=>{
+  if(!pendingBackup()) return lockNow();
+  confirmBox('<b>Hi ha canvis que encara no tenen còpia de seguretat.</b> Vols desar-la abans de bloquejar l\u2019app?',IOS?'Desa una còpia a iCloud':'Fes una còpia ara',async()=>{await doBackup();lockNow();},false,'Bloqueja sense còpia',lockNow);
+});
 route();
 if(!LOCKED) initFile();
 </script>
